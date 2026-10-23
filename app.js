@@ -32,6 +32,10 @@ const PROD=!!window.CANTINE_PROD;
 const STAFF_APP=!!window.CANTINE_STAFF;
 /* Deux sites séparés (clients et équipe) : chacun est une application installable à part, avec sa propre icône. */
 const STAFF_URL=(BACKEND&&!STAFF_APP&&window.CANTINE_CONFIG.staffUrl)||'';     // site clients : adresse du site équipe
+/* Capacité par créneau de retrait (0 = illimité) */
+let slotUse={};
+const slotCount=(d,t)=>BACKEND?(slotUse[d+' '+t]||0):S.orders.filter(o=>o.pickupDate===d&&o.pickupTime===t&&o.status!=='cancelled').length;
+const slotFull=(d,t)=>{const c=(S&&S.settings&&S.settings.slotCap)||0;return c>0&&slotCount(d,t)>=c};
 const CLIENT_URL=(BACKEND&&STAFF_APP&&window.CANTINE_CONFIG.clientUrl)||'';    // site équipe : adresse du site clients   // application « équipe » installée depuis /equipe/ : icône et nom distincts de l'application des clients
 const installReady=()=>PROD&&!isStandalone()&&(!!deferredInstall||isIOS());   // site publié : aucune donnée ni identifiant de démonstration, jamais de repli en mode démo
 /* Comptes clients (connexion par SMS) : désactivés si config.js contient clientAccounts: false. Les commandes en invité restent possibles. */
@@ -147,7 +151,7 @@ function seed(){
   {at:now-864e5,by:'Yao Agbeko',text:'A défini le menu du jour'}
  ];
  return {v:1,seq:1000+orders.length,
-  settings:{name:'Cantine du Quartier',tagline:'Cuisine togolaise faite maison, à emporter ou à déguster sur place.',address:'Boulevard du 13 Janvier, Lomé, Togo',phone:'+228 90 00 00 00',email:'contact@cantineduquartier.tg',style:'nature',hours,prepMin:20,slot:15,legal:{company:'',form:'',nif:'',rccm:'',director:'',host:'',contact:'',retention:''},
+  settings:{name:'Cantine du Quartier',tagline:'Cuisine togolaise faite maison, à emporter ou à déguster sur place.',address:'Boulevard du 13 Janvier, Lomé, Togo',phone:'+228 90 00 00 00',email:'contact@cantineduquartier.tg',style:'nature',hours,prepMin:20,slot:15,slotCap:0,notifyEmail:false,legal:{company:'',form:'',nif:'',rccm:'',director:'',host:'',contact:'',retention:''},
    payments:[
     {id:'mixx',label:'Mixx by Yas',kind:'momo',on:true,hint:'Paiement mobile, ex-T-Money'},
     {id:'flooz',label:'Flooz (Moov)',kind:'momo',on:true,hint:'Paiement mobile'},
@@ -265,6 +269,18 @@ const ICON={
  pin:'<path d="M12 21s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="9" r="2.5" fill="currentColor"/>',
  user:'<circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'
 };
+function currentOrderInfo(){            // démonstration : dernière commande passée sur cet appareil
+ const nums=mine();if(!nums.length)return null;
+ const num=nums.slice().sort((a,b)=>(+b.replace(/\D/g,''))-(+a.replace(/\D/g,'')))[0];
+ const o=S.orders.find(x=>x.num===num);
+ return o?{num:o.num,status:o.status,payStatus:o.payStatus,pickupTime:o.pickupTime}:null;
+}
+function orderBar(){
+ const i=currentOrderInfo();
+ if(!i||i.status==='done'||i.status==='cancelled'||route().p[0]==='suivi')return '';
+ const msg=i.status==='awaiting'?'Paiement en attente':i.status==='new'?(i.payStatus==='à vérifier'?'Reçue, paiement en cours de vérification':'Reçue'):i.status==='prep'?'En préparation':i.status==='ready'?'Prête : venez la récupérer':'En cours';
+ return `<a class="orderbar ${i.status}" href="#/suivi/${esc(i.num)}"><span><strong>Commande ${esc(i.num)}</strong> : ${msg}</span><span class="ob-t">Retrait ${hmc(i.pickupTime)}</span></a>`;
+}
 function installBanner(){
  if(!installReady())return '';
  if(Date.now()-(+ls.get('cantine-install-off')||0)<14*DAY)return '';
@@ -282,7 +298,7 @@ function shell(inner){
   ${ACCOUNTS?`<a class="btn ghost sm hide-m" href="#/compte">${cl?esc(cl.name.split(' ')[0]):'Mon compte'}</a>`:''}
   <button class="btn sm" data-a="cartOpen" aria-label="Ouvrir le panier">Panier${n?` <span class="count">${n}</span>`:''}</button>
  </div></header>
- <main id="main">${installBanner()}${inner}</main>
+ <main id="main">${orderBar()}${installBanner()}${inner}</main>
  <footer class="site"><div class="wrap">
   <div><h3>${esc(s.name)}</h3><p>${esc(s.tagline)}</p></div>
   <div><h3>Nous trouver</h3><p>${esc(s.address)}</p><p><a href="tel:${esc(s.phone.replace(/\s/g,''))}">${esc(s.phone)}</a></p></div>
@@ -410,11 +426,12 @@ function pageCheckout(){
   <div class="panel"><h2>Vos coordonnées</h2>
    <div class="row"><div class="field"><label for="f-name">Nom</label><input class="input" id="f-name" name="name" autocomplete="name" required value="${esc(dr.name!=null?dr.name:(cl?cl.name:''))}"></div>
    <div class="field"><label for="f-phone">Téléphone</label><input class="input" id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="90 00 00 00" required value="${esc(phone0)}"></div></div>
+   ${S.settings.notifyEmail?`<div class="field"><label for="f-email">E-mail (facultatif)</label><input class="input" id="f-email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="vous@exemple.com" value="${esc(dr.email||'')}"><span class="hint">Pour être prévenu quand votre commande est reçue et prête. Utilisé uniquement pour cette commande.</span></div>`:''}
    ${cl||!ACCOUNTS?'':`<p class="hint">Vous avez un compte ? <a href="#/compte">Connectez-vous</a> pour pré-remplir vos informations et utiliser votre crédit.</p>`}
   </div>
   <div class="panel"><h2>Retrait</h2>
    <div class="row"><div class="field"><label for="f-day">Jour</label><select class="input" id="f-day" name="day" data-c="pickupDay">${opts.map(o=>`<option value="${o.key}" ${o.key===day.key?'selected':''}>${esc(o.label)}</option>`).join('')}</select></div>
-   <div class="field"><label for="f-time">Heure</label><select class="input" id="f-time" name="time">${day.slots.map(t=>`<option value="${t}" ${dr.time===t?'selected':''}>${hmc(t)}</option>`).join('')}</select></div></div>
+   <div class="field"><label for="f-time">Heure</label><select class="input" id="f-time" name="time">${day.slots.map(t=>{const full=slotFull(day.key,t);return `<option value="${t}" ${dr.time===t&&!full?'selected':''} ${full?'disabled':''}>${hmc(t)}${full?' (complet)':''}</option>`}).join('')}</select></div></div>
    <div class="field"><label for="f-note">Instructions pour la cuisine (facultatif)</label><textarea class="input" id="f-note" name="note" placeholder="Ex. sans piment">${esc(dr.note||'')}</textarea></div>
   </div>
   <div class="panel"><h2>Paiement</h2>
@@ -583,11 +600,12 @@ function pageLegal(kind){
   <h2>Responsable du traitement</h2><p>${company}, ${esc(s.address)}. Contact pour vos données : ${contact}.</p>
   <h2>Données collectées et pourquoi</h2><ul>
   <li><strong>Commande</strong> : nom, téléphone, heure de retrait, contenu de la commande, instructions. Pour préparer et vous remettre votre commande, et vous prévenir en cas de problème.</li>
+  ${S.settings.notifyEmail?'<li><strong>E-mail (facultatif)</strong> : adresse saisie à la commande, utilisée uniquement pour vous prévenir quand votre commande est reçue, prête ou annulée.</li>':''}
   ${ACCOUNTS?`<li><strong>Compte client (facultatif)</strong> : nom, téléphone, historique des commandes, crédit. Pour retrouver vos commandes et gérer votre crédit. La connexion se fait par code envoyé par SMS.</li>`:''}
   <li><strong>Paiement</strong> : le règlement en ligne est traité par CinetPay. La cantine ne reçoit ni votre numéro de carte ni votre code secret, seulement la confirmation du paiement.</li>
   <li><strong>Équipe</strong> : nom, identifiant, actions effectuées, pour la sécurité et le suivi du service.</li>
   <li><strong>Sécurité</strong> : votre adresse IP est utilisée brièvement pour limiter les abus (conservée environ 24 heures).</li></ul>
-  <h2>Qui reçoit vos données</h2><p>Uniquement les prestataires nécessaires au service : Supabase (hébergement de la base de données), CinetPay (paiement en ligne), ${ACCOUNTS?todo('fournisseur SMS')+' (envoi des codes de connexion), ':''}${host} (hébergement du site). Les polices d'écriture du site sont chargées depuis Google Fonts, ce qui transmet votre adresse IP à Google.</p>
+  <h2>Qui reçoit vos données</h2><p>Uniquement les prestataires nécessaires au service : Supabase (hébergement de la base de données), CinetPay (paiement en ligne), ${ACCOUNTS?todo('fournisseur SMS')+' (envoi des codes de connexion), ':''}${S.settings.notifyEmail?'Brevo (envoi des e-mails de suivi de commande), ':''}${host} (hébergement du site). Les polices d'écriture du site sont chargées depuis Google Fonts, ce qui transmet votre adresse IP à Google.</p>
   <h2>Transferts hors du Togo</h2><p>Ces prestataires peuvent être situés hors du Togo. Nous veillons à ce que le niveau de protection de vos données reste adéquat, comme l'exige la loi.</p>
   <h2>Durée de conservation</h2><p>Commandes : ${lg.retention?esc(lg.retention)+' an'+(+lg.retention>1?'s':''):todo('durée à fixer avec votre comptable')}. Compte client : jusqu'à votre demande de suppression. Les codes SMS ne sont pas conservés par la cantine.</p>
   <h2>Vos droits</h2><p>Vous pouvez demander l'accès à vos données, leur rectification, leur effacement ou vous opposer à leur traitement, en écrivant à ${contact} ou en appelant le ${esc(s.phone)}. Nous répondons dans un délai raisonnable. Pour un effacement, votre compte et vos commandes sont rendus anonymes (le crédit éventuel doit d'abord être utilisé ou remboursé). Vous pouvez aussi saisir l'Instance de protection des données à caractère personnel (IPDCP) du Togo.</p>
@@ -845,7 +863,8 @@ function pageSettings(){
  const idn=ad?`<form class="panel" data-form="identity"><h2>Identité</h2><div class="field"><label for="i-n">Nom de la cantine</label><input class="input" id="i-n" name="name" required value="${esc(s.name)}"><span class="hint">Visible partout sur le site. Seul l'Administrateur peut le changer.</span></div><div class="field"><label for="i-t">Slogan</label><input class="input" id="i-t" name="tagline" value="${esc(s.tagline)}"></div><button class="btn" type="submit">Enregistrer</button></form>`:'';
  const contact=`<form class="panel" data-form="contact"><h2>Coordonnées</h2><div class="field"><label for="k-a">Adresse complète</label><input class="input" id="k-a" name="address" required value="${esc(s.address)}"></div><div class="row"><div class="field"><label for="k-p">Téléphone</label><input class="input" id="k-p" name="phone" required value="${esc(s.phone)}"></div><div class="field"><label for="k-e">E-mail</label><input class="input" id="k-e" name="email" type="email" value="${esc(s.email||'')}"></div></div><button class="btn" type="submit">Enregistrer</button></form>`;
  const hrs=`<form class="panel" data-form="hours"><h2>Horaires et retrait</h2>${[1,2,3,4,5,6,0].map(d=>{const t=s.hours[d];return `<div class="cl"><label class="check" style="min-width:140px"><input type="checkbox" name="o${d}" ${t?'checked':''}>${cap(DAYNAMES[d])}</label><input class="input" style="width:120px" type="time" name="f${d}" value="${t?t[0]:'11:30'}" aria-label="Ouverture ${DAYNAMES[d]}"><span>à</span><input class="input" style="width:120px" type="time" name="t${d}" value="${t?t[1]:'15:30'}" aria-label="Fermeture ${DAYNAMES[d]}"></div>`}).join('')}
- <div class="row" style="margin-top:14px"><div class="field"><label for="h-p">Délai minimal de préparation (min)</label><input class="input" id="h-p" name="prep" type="number" min="5" step="5" value="${s.prepMin}"></div><div class="field"><label for="h-s">Créneaux de retrait toutes les (min)</label><select class="input" id="h-s" name="slot">${[10,15,20,30].map(m=>`<option ${s.slot===m?'selected':''}>${m}</option>`).join('')}</select></div></div><button class="btn" type="submit">Enregistrer</button></form>`;
+ <div class="row" style="margin-top:14px"><div class="field"><label for="h-p">Délai minimal de préparation (min)</label><input class="input" id="h-p" name="prep" type="number" min="5" step="5" value="${s.prepMin}"></div><div class="field"><label for="h-s">Créneaux de retrait toutes les (min)</label><select class="input" id="h-s" name="slot">${[10,15,20,30].map(m=>`<option ${s.slot===m?'selected':''}>${m}</option>`).join('')}</select></div></div>
+ <div class="field" style="max-width:340px"><label for="h-c">Commandes maximum par créneau (0 = illimité)</label><input class="input" id="h-c" name="cap" type="number" min="0" max="200" value="${s.slotCap||0}"><span class="hint">Évite de surcharger la cuisine : un créneau complet n'est plus proposé aux clients.</span></div><button class="btn" type="submit">Enregistrer</button></form>`;
  const legal=ad?`<form class="panel" data-form="legal"><h2>Informations légales</h2><p class="muted small" style="margin-bottom:12px">Utilisées dans les mentions légales, la politique de confidentialité et les conditions de vente.</p>
  <div class="row"><div class="field"><label for="g-c">Raison sociale</label><input class="input" id="g-c" name="company" value="${esc(lg.company||'')}"></div><div class="field"><label for="g-f">Forme juridique</label><input class="input" id="g-f" name="form" placeholder="Ex. entreprise individuelle, SARL" value="${esc(lg.form||'')}"></div></div>
  <div class="row"><div class="field"><label for="g-n">NIF</label><input class="input" id="g-n" name="nif" value="${esc(lg.nif||'')}"></div><div class="field"><label for="g-r">RCCM</label><input class="input" id="g-r" name="rccm" value="${esc(lg.rccm||'')}"></div></div>
@@ -853,11 +872,12 @@ function pageSettings(){
  <div class="row"><div class="field"><label for="g-k">Contact pour les données personnelles</label><input class="input" id="g-k" name="contact" placeholder="E-mail ou téléphone" value="${esc(lg.contact||'')}"></div><div class="field"><label for="g-t">Conservation des commandes (années)</label><input class="input" id="g-t" name="retention" type="number" min="1" max="30" value="${esc(lg.retention||'')}"><span class="hint">À fixer avec votre comptable.</span></div></div>
  <button class="btn" type="submit">Enregistrer</button></form>`:'';
  const look=ad?`<div class="panel"><h2>Apparence</h2><div class="themes">${STYLES.map(t=>`<button class="theme" data-a="style" data-v="${t.id}" aria-pressed="${s.style===t.id}"><span class="sw">${t.sw.map(c=>`<i style="background:${c}"></i>`).join('')}</span><strong>${t.name}</strong><span class="muted small">${t.desc}</span></button>`).join('')}</div></div>`:'';
+ const notif=ad?`<div class="panel"><h2>Notifications par e-mail</h2><div class="cl"><div class="nm"><strong>Prévenir les clients par e-mail</strong><small>Commande reçue, prête, annulée</small></div><span class="switch"><input type="checkbox" role="switch" aria-label="Activer les e-mails aux clients" data-c="notifyEmail" ${s.notifyEmail?'checked':''}></span></div><p class="hint" style="margin-top:10px">À activer seulement après avoir configuré l'envoi (guide EMAIL.md). Le champ e-mail apparaît alors à la commande.</p></div>`:'';
  const pay=ad?`<div class="panel"><h2>Moyens de paiement</h2>${s.payments.map(p=>`<div class="cl"><div class="nm"><strong>${esc(p.label)}</strong><small>${p.kind==='momo'?'Mobile money':p.kind==='card'?'Carte bancaire':p.kind==='manual'?'Compte marchand (vérification par l\'équipe)':'Paiement au retrait'}</small></div><span class="switch"><input type="checkbox" role="switch" aria-label="Activer ${esc(p.label)}" data-c="payToggle" data-id="${p.id}" ${p.on?'checked':''}></span></div>${p.kind==='manual'?payDetailsForm(p):''}`).join('')}
  <form data-form="payAdd" style="margin-top:14px"><h3>Ajouter un moyen de paiement mobile</h3><div class="row"><div class="field"><label for="p-l">Nom</label><input class="input" id="p-l" name="label" placeholder="Ex. Wave" required></div><div class="field" style="align-self:end"><button class="btn" type="submit">Ajouter</button></div></div></form>
  <p class="hint">La connexion à l'agrégateur (CinetPay, PayDunya, SEMOA) se configure lors de la mise en production.</p></div>`:'';
  const data=ad&&!BACKEND?`<div class="panel"><h2>Données de démonstration</h2><p class="muted" style="margin-bottom:12px">Remet les commandes, plats, stocks et comptes à leur état initial.</p><button class="btn danger" data-a="resetDemo">Réinitialiser les données</button></div>`:'';
- return adminShell('parametres','Paramètres',`<div class="cols"><div>${idn}${contact}${hrs}</div><div>${look}${pay}${legal}${data}</div></div>`);
+ return adminShell('parametres','Paramètres',`<div class="cols"><div>${idn}${contact}${hrs}</div><div>${look}${pay}${notif}${legal}${data}</div></div>`);
 }
 
 /* ====================== profil, FAQ, activité ====================== */
@@ -957,7 +977,7 @@ function need(ok){if(!ok)toast(ls.get('cantine-staff')&&!staff()?'Votre compte e
 /* ====================== panier : actions ====================== */
 function captureDraft(){
  const f=$('#checkout');if(!f)return;const fd=new FormData(f),cb=$('#useCredit');
- ui.draft={name:fd.get('name'),phone:fd.get('phone'),day:fd.get('day'),time:fd.get('time'),note:fd.get('note'),method:fd.get('method'),momo:fd.get('momo'),cgv:!!fd.get('cgv'),useCredit:cb?cb.checked:undefined};
+ ui.draft={name:fd.get('name'),phone:fd.get('phone'),day:fd.get('day'),time:fd.get('time'),note:fd.get('note'),method:fd.get('method'),momo:fd.get('momo'),email:fd.get('email'),cgv:!!fd.get('cgv'),useCredit:cb?cb.checked:undefined};
 }
 function cartChange(){saveCart();if(route().p[0]==='commande')captureDraft();render();refreshDrawer()}
 function addToCart(id){const i=cart.items.find(x=>x.id===id);if(i)i.qty++;else cart.items.push({id,qty:1})}
@@ -1055,6 +1075,7 @@ const CHG={
  pickupDay(el){captureDraft();ui.draft.day=el.value;ui.draft.time=undefined;render()},
  orange(el){oUi.range=el.value;render()},
  dishActive(el){if(!need(can('menus'))){el.checked=!el.checked;return}const d=dish(el.dataset.id);d.active=el.checked;logAct((d.active?'A activé':'A désactivé')+' le plat « '+d.name+' »');save();render()},
+ notifyEmail(el){if(!need(isAdmin())){el.checked=!el.checked;return}S.settings.notifyEmail=el.checked;logAct((el.checked?'A activé':'A désactivé')+' les e-mails aux clients');save();render()},
  payToggle(el){if(!need(isAdmin())){el.checked=!el.checked;return}const p=payById(el.dataset.id);p.on=el.checked;logAct((p.on?'A activé':'A désactivé')+' le paiement '+p.label);save();render()},
  async photo(el){const f=el.files[0];if(!f)return;try{tmpPhoto=await readImage(f);const p=$('#photoPrev');if(p)p.innerHTML=`<img src="${tmpPhoto}" alt="Aperçu">`}catch(e){toast('Image illisible, essayez un autre fichier.','bad')}},
  async photoUser(el){const f=el.files[0];if(!f)return;try{tmpPhoto=await readImage(f,256);const p=$('#photoPrev');if(p){const w=p.style.width||'56px';p.outerHTML=`<img id="photoPrev" class="av" style="width:${w};height:${w}" src="${tmpPhoto}" alt="Aperçu">`}}catch(e){toast('Image illisible, essayez un autre fichier.','bad')}},
@@ -1072,8 +1093,11 @@ const FORMS={
   const name=String(fd.get('name')||'').trim(),phone=normPhone(fd.get('phone'));
   if(!name)return fail('Indiquez votre nom.');
   if(phone.length!==8)return fail('Le téléphone doit comporter 8 chiffres.');
+  const email=String(fd.get('email')||'').trim().toLowerCase();
+  if(email&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return fail('Adresse e-mail invalide.');
   const op=pickupOptions().find(x=>x.key===fd.get('day')),time=fd.get('time');
   if(!op||!op.slots.includes(time))return fail('Choisissez un créneau de retrait valide.');
+  if(slotFull(op.key,time))return fail('Ce créneau est complet : choisissez une autre heure.');
   const pm=payById(fd.get('method'));if(!pm||!pm.on)return fail('Choisissez un moyen de paiement.');
   if(!fd.get('cgv'))return fail('Cochez l\'acceptation des conditions de vente et de la politique de confidentialité.');
   const total=cartTotal(),cl=client(),credit=cl&&fd.get('useCredit')?Math.min(cl.credit,total):0,due=total-credit;
@@ -1092,7 +1116,7 @@ const FORMS={
   }
   const c2=client(),num='A-'+(++S.seq),now=Date.now();
   const items=lines.map(l=>({id:l.id,name:l.id==='formule'?'Formule du jour ('+l.sub+')':l.name,price:l.price,qty:l.qty}));
-  const o={id:uid(),num,at:now,name,phone,pickupDate:op.key,pickupTime:time,items,subtotal:total,credit,due,method:due===0?'credit':pm.id,methodLabel:due===0?'Crédit client':pm.label,
+  const o={id:uid(),num,at:now,name,phone,email:S.settings.notifyEmail?email:'',pickupDate:op.key,pickupTime:time,items,subtotal:total,credit,due,method:due===0?'credit':pm.id,methodLabel:due===0?'Crédit client':pm.label,
    payStatus:due===0?'payé':pm.kind==='cash'?'à payer':'payé',status:'new',clientId:c2?c2.id:null,note:String(fd.get('note')||'').trim(),history:[{s:'new',at:now,by:'Client'}]};
   if(credit>0&&c2)addCredit(c2,-credit,'Commande '+num,'Client');
   S.orders.push(o);save();cart.items=[];saveCart();ui.draft={};remember(num);
@@ -1179,7 +1203,7 @@ const FORMS={
  hours(f){
   if(!need(isAdmin()||staff().role==='gerant'))return;const fd=new FormData(f),h={};
   for(let d=0;d<7;d++){if(fd.get('o'+d)){const a=fd.get('f'+d),b=fd.get('t'+d);if(!a||!b||toMin(a)>=toMin(b)){toast('Vérifiez les horaires de '+DAYNAMES[d]+' : l\'ouverture doit précéder la fermeture.','bad');return}h[d]=[a,b]}else h[d]=null}
-  S.settings.hours=h;S.settings.prepMin=Math.max(5,+fd.get('prep')||20);S.settings.slot=+fd.get('slot')||15;logAct('A modifié les horaires');save();render();toast('Horaires enregistrés','ok');
+  S.settings.hours=h;S.settings.prepMin=Math.max(5,+fd.get('prep')||20);S.settings.slot=+fd.get('slot')||15;S.settings.slotCap=Math.max(0,Math.min(200,Math.round(+fd.get('cap')||0)));logAct('A modifié les horaires');save();render();toast('Horaires enregistrés','ok');
  },
  payAdd(f){if(!need(isAdmin()))return;const l=String(new FormData(f).get('label')||'').trim();if(!l)return;S.settings.payments.push({id:'p'+uid(),label:l,kind:'momo',on:true,hint:'Paiement mobile'});logAct('A ajouté le moyen de paiement '+l);save();render()},
  profile(f){
