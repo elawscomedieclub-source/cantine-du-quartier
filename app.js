@@ -692,11 +692,13 @@ function payDetailsForm(p){const d=p.details||{};return `<form data-form="payDet
 const payBadge=o=>o.status==='cancelled'&&(o.payStatus==='à payer'||o.payStatus==='à vérifier')?'<span class="st st-none">Sans paiement</span>':`<span class="st ${o.payStatus==='payé'?'st-paid':(o.payStatus==='à payer'||o.payStatus==='à vérifier')?'st-due':'st-refund'}">${cap(o.payStatus)}</span>`;
 function orderCard(o){
  const nx=NEXT[o.status];
+ const cash=o.payStatus==='à payer'&&o.status!=='cancelled'&&o.status!=='done';
  return `<article class="ord ${o.status}" data-a="orderOpen" data-id="${o.id}">
   <div class="ord-h"><strong>${esc(o.num)}</strong><span class="st st-${o.status}">${STATUS[o.status]}</span>${payBadge(o)}<span class="muted small">Retrait ${hmc(o.pickupTime)}</span><span class="muted small" style="margin-left:auto">${esc(ago(o.at))}</span></div>
   <div><strong>${esc(o.name)}</strong> <span class="muted small">${esc(fmtPhone(o.phone))}</span>${o.ref?` <span class="small">Réf. <strong>${esc(o.ref)}</strong></span>`:''}</div>
   <div class="muted small">${o.items.map(i=>i.qty+'× '+esc(i.name)).join(', ')}</div>
-  <div class="ord-f"><strong>${money(o.subtotal)}</strong><div style="display:flex;gap:8px"><button class="btn ghost sm" data-a="orderOpen" data-id="${o.id}">Détails</button>${o.payStatus==='à vérifier'&&o.status!=='cancelled'?`<button class="btn sm accent" data-a="markPaid" data-id="${o.id}">Valider le paiement</button>`:nx?`<button class="btn sm ${o.status==='new'?'accent':''}" data-a="advance" data-id="${o.id}">${nx[1]}</button>`:''}</div></div></article>`;
+  ${cash?`<div class="ord-cash">💵 À encaisser au retrait : ${money(o.due)}</div>`:''}
+  <div class="ord-f"><strong>${money(o.subtotal)}</strong><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" data-a="orderOpen" data-id="${o.id}">Détails</button>${o.payStatus==='à vérifier'&&o.status!=='cancelled'?`<button class="btn sm accent" data-a="markPaid" data-id="${o.id}">Valider le paiement</button>`:nx?`<button class="btn sm ${o.status==='new'?'accent':''}" data-a="advance" data-id="${o.id}">${nx[1]}</button>`:''}</div></div></article>`;
 }
 let oUi={f:'all',q:'',range:'today'};
 function ordersFiltered(){
@@ -912,18 +914,31 @@ function pageKitchen(){
   return `<section class="kcol k-${st}" aria-label="${title}"><h2>${title} <span class="kc">${l.length}</span></h2><p class="kh">${hint}</p>${l.length?l.map(kCard).join(''):'<div class="kempty">Aucune commande</div>'}</section>`;
  };
  const verif=act.filter(o=>o.payStatus==='à vérifier').length;
- return `<div class="kitchen"><header class="khead"><div><strong>${esc(S.settings.name)}</strong> <span class="muted">Mode cuisine</span></div><div class="kright">${verif?`<span class="st st-new">${verif} paiement${verif>1?'s':''} à vérifier</span>`:''}<span class="kclock">${new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span><a class="btn ghost sm" style="color:#fff;border-color:rgba(255,255,255,.4)" href="#/admin">Quitter</a></div></header>
- <div class="kgrid">${col('new','Nouvelles','À lancer')}${col('prep','En préparation','À finir')}${col('ready','Prêtes','À remettre au client')}</div></div>`;
+ const nNew=act.filter(o=>o.status==='new').length,nPrep=act.filter(o=>o.status==='prep').length,nReady=act.filter(o=>o.status==='ready').length;
+ return `<div class="kitchen"><header class="khead"><div><strong>${esc(S.settings.name)}</strong> <span class="muted">· Mode cuisine</span>
+  <span class="muted" style="margin-left:12px">${nNew+nPrep+nReady} en cours</span></div>
+  <div class="kright">${verif?`<span class="st st-new">${verif} paiement${verif>1?'s':''} à vérifier</span>`:''}
+  <span class="kclock" id="kclock">${new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>
+  <a class="btn ghost sm" style="color:#fff;border-color:rgba(255,255,255,.4)" href="#/admin/commandes">Caisse</a>
+  <a class="btn ghost sm" style="color:#fff;border-color:rgba(255,255,255,.4)" href="#/admin">Quitter</a></div></header>
+ <div class="kgrid">${col('new','Nouvelles','À lancer en cuisine')}${col('prep','En préparation','Presque prêtes')}${col('ready','Prêtes','À remettre au client')}</div></div>`;
 }
 function kCard(o){
  const nx=NEXT[o.status],ver=o.payStatus==='à vérifier';
- const late=o.pickupDate===dkey(Date.now())&&o.status!=='ready'&&(+o.pickupTime.slice(0,2)*60+ +o.pickupTime.slice(3,5))<(new Date().getHours()*60+new Date().getMinutes());
+ const nowM=new Date().getHours()*60+new Date().getMinutes();
+ const pickM=+o.pickupTime.slice(0,2)*60+ +o.pickupTime.slice(3,5);
+ const late=o.pickupDate===dkey(Date.now())&&o.status!=='ready'&&pickM<nowM;
+ const mins=Math.max(0,Math.round((Date.now()-o.at)/60000));
+ const agoTxt=mins<1?'à l\'instant':mins<60?('il y a '+mins+' min'):('il y a '+Math.round(mins/60)+' h');
+ const waitTxt=o.pickupDate===dkey(Date.now())?(pickM>=nowM?('dans '+(pickM-nowM)+' min'):('en retard de '+(nowM-pickM)+' min')):esc(dshort(keyDate(o.pickupDate)));
  return `<article class="kc-card ${late?'late':''}"><div class="kc-top"><strong class="kc-num">${esc(o.num)}</strong><span class="kc-time">${hmc(o.pickupTime)}</span></div>
+  <div class="kc-ago">${esc(agoTxt)} · retrait ${waitTxt}</div>
   <div class="kc-name">${esc(o.name)}</div>
   <ul class="kc-items">${o.items.map(i=>`<li><b>${i.qty}×</b> ${esc(i.name)}</li>`).join('')}</ul>
-  ${o.note?`<div class="kc-note">${esc(o.note)}</div>`:''}
-  ${o.payStatus==='à payer'?'<div class="kc-pay">À encaisser au retrait : '+money(o.due)+'</div>':''}
-  ${ver?`<button class="btn accent kc-btn" data-a="markPaid" data-id="${o.id}">Valider le paiement (réf. ${esc(o.ref||'')})</button>`:(nx?`<button class="btn kc-btn" data-a="advance" data-id="${o.id}">${nx[1]}</button>`:'')}
+  ${o.note?`<div class="kc-note">📝 ${esc(o.note)}</div>`:''}
+  ${o.payStatus==='à payer'?`<div class="kc-pay">💵 À encaisser : ${money(o.due)}</div>`:''}
+  ${o.payStatus==='payé'&&o.status!=='done'?`<div class="kc-ago" style="color:#5BC27A;font-weight:700">✓ Payé</div>`:''}
+  ${ver?`<button class="btn accent kc-btn" data-a="markPaid" data-id="${o.id}">Valider le paiement${o.ref?' · '+esc(o.ref):''}</button>`:(nx?`<button class="btn kc-btn ${o.status==='new'?'accent':''}" data-a="advance" data-id="${o.id}">${nx[1]}</button>`:'')}
  </article>`;
 }
 
@@ -1009,7 +1024,7 @@ const ACT={
  installOff(){ls.set('cantine-install-off',String(Date.now()));render()},
  modalClose(){closeModal()},
  confirmOk(){const cb=confirmCb;confirmCb=null;closeModal();if(cb)cb()},
- add(el){addToCart(el.dataset.id);cartChange();toast('Ajouté au panier','ok');if(el.dataset.close)closeModal()},
+ add(el){addToCart(el.dataset.id);cartChange();if(typeof soundAdd==='function')soundAdd();el.classList.add('just-added');setTimeout(()=>el.classList.remove('just-added'),450);toast('Ajouté au panier ✓','ok');if(el.dataset.close)closeModal()},
  inc(el){addToCart(el.dataset.id);cartChange()},
  dec(el){const i=cart.items.find(x=>x.id===el.dataset.id);if(!i)return;i.qty--;if(i.qty<=0)cart.items=cart.items.filter(x=>x!==i);cartChange()},
  cartOpen(){drawerIsOpen=true;$('#drawer').innerHTML=drawerHtml();const b=$('#drawer .x');if(b)b.focus()},
@@ -1026,7 +1041,7 @@ const ACT={
  range(el){dashRange=el.dataset.v;render()},
  ofilter(el){oUi.f=el.dataset.v;render()},
  orderOpen(el){const o=S.orders.find(x=>x.id===el.dataset.id);if(o)orderModal(o)},
- advance(el){const o=S.orders.find(x=>x.id===el.dataset.id);if(!o||!need(can('commandes')))return;setStatus(o,NEXT[o.status][0]);render()},
+ advance(el){const o=S.orders.find(x=>x.id===el.dataset.id);if(!o||!need(can('commandes')))return;const next=NEXT[o.status][0];setStatus(o,next);if(next==='ready'&&typeof soundOk==='function')soundOk();if(next==='prep'&&typeof beep==='function')beep();render()},
  setStatus(el){const o=S.orders.find(x=>x.id===el.dataset.id);if(!o||!need(can('commandes')))return;setStatus(o,el.dataset.v);render();orderModal(o)},
  markPaid(el){const o=S.orders.find(x=>x.id===el.dataset.id);if(!o||!need(can('commandes')))return;o.payStatus='payé';logAct('Commande '+o.num+' : marquée payée');save();render();orderModal(o)},
  refundCredit(el){
@@ -1120,7 +1135,7 @@ const FORMS={
    payStatus:due===0?'payé':pm.kind==='cash'?'à payer':'payé',status:'new',clientId:c2?c2.id:null,note:String(fd.get('note')||'').trim(),history:[{s:'new',at:now,by:'Client'}]};
   if(credit>0&&c2)addCredit(c2,-credit,'Commande '+num,'Client');
   S.orders.push(o);save();cart.items=[];saveCart();ui.draft={};remember(num);
-  location.hash='#/suivi/'+num;render();toast('Commande envoyée. Merci !','ok');
+  location.hash='#/suivi/'+num;render();if(typeof soundOk==='function')soundOk();if(typeof confetti==='function')confetti();toast('Commande envoyée. Merci !','ok');
  },
  lookup(f){
   const fd=new FormData(f),num=String(fd.get('num')||'').trim().toUpperCase(),ph=normPhone(fd.get('phone'));
@@ -1223,7 +1238,45 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(modalOpen()&&!$(
 let audioCtx=null;
 function unlockAudio(){try{const A=window.AudioContext||window.webkitAudioContext;if(!audioCtx&&A)audioCtx=new A();if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume()}catch(e){}}
 document.addEventListener('click',unlockAudio);document.addEventListener('touchstart',unlockAudio,{passive:true});
-function beep(){try{unlockAudio();const c=audioCtx;if(!c||c.state!=='running')return;const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=.08;o.start();o.stop(c.currentTime+.25)}catch(e){}}
+function tone(freq,start,dur,type,vol){
+ try{unlockAudio();const c=audioCtx;if(!c||c.state!=='running')return;
+  const o=c.createOscillator(),g=c.createGain();o.type=type||'sine';o.frequency.value=freq;
+  g.gain.setValueAtTime(0,c.currentTime+start);g.gain.linearRampToValueAtTime(vol||.09,c.currentTime+start+.02);
+  g.gain.exponentialRampToValueAtTime(.001,c.currentTime+start+dur);o.connect(g);g.connect(c.destination);
+  o.start(c.currentTime+start);o.stop(c.currentTime+start+dur+.02)}catch(e){}
+}
+function beep(){tone(880,0,.22,'sine',.1);tone(1174,0.12,.18,'sine',.07)}
+function soundOk(){tone(523,0,.12,'sine',.08);tone(659,.1,.12,'sine',.09);tone(784,.2,.28,'triangle',.1)}
+function soundAdd(){tone(660,0,.08,'sine',.06);tone(880,.06,.1,'sine',.05)}
+function confetti(opts={}){
+ const n=opts.n||80,colors=opts.colors||['#F28C1B','#3A7650','#E9A92B','#C2255C','#1C7ED6','#fff','#F4E9C8'];
+ const c=document.createElement('canvas');c.setAttribute('aria-hidden','true');
+ Object.assign(c.style,{position:'fixed',inset:'0',width:'100%',height:'100%',pointerEvents:'none',zIndex:'400'});
+ document.body.appendChild(c);const ctx=c.getContext('2d');
+ const dpr=Math.min(window.devicePixelRatio||1,2);let W,H;
+ const resize=()=>{W=window.innerWidth;H=window.innerHeight;c.width=W*dpr;c.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)};
+ resize();
+ const parts=Array.from({length:n},()=>({
+  x:W*.3+Math.random()*W*.4,y:H*.15+Math.random()*H*.15,
+  vx:(Math.random()-.5)*9,vy:-(6+Math.random()*10),g:.22+Math.random()*.18,
+  w:6+Math.random()*8,h:8+Math.random()*10,rot:Math.random()*Math.PI,rv:(Math.random()-.5)*.25,
+  color:colors[Math.floor(Math.random()*colors.length)],life:1,shape:Math.random()>.4?'rect':'circle'
+ }));
+ let start=performance.now();
+ function frame(t){
+  const dt=Math.min(32,(t-start))/16;start=t;ctx.clearRect(0,0,W,H);let alive=false;
+  for(const p of parts){
+   if(p.life<=0)continue;alive=true;p.vy+=p.g*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.rot+=p.rv*dt;p.life-=.008*dt;p.vx*=.995;
+   ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.rot);ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.color;
+   if(p.shape==='circle'){ctx.beginPath();ctx.arc(0,0,p.w*.5,0,Math.PI*2);ctx.fill()}
+   else{ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h)}
+   ctx.restore();
+  }
+  if(alive)requestAnimationFrame(frame);else c.remove();
+ }
+ requestAnimationFrame(frame);
+ setTimeout(()=>{try{c.remove()}catch(e){}},4500);
+}
 /* écran de cuisine : empêche la mise en veille tant que l'espace équipe est ouvert */
 let wakeLock=null;
 async function keepAwake(){try{if(staff()&&'wakeLock' in navigator&&!wakeLock){wakeLock=await navigator.wakeLock.request('screen');wakeLock.addEventListener('release',()=>{wakeLock=null})}}catch(e){}}

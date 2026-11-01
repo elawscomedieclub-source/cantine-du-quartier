@@ -258,7 +258,7 @@
           catch (e) { closeModal(); toast('Paiement indisponible pour le moment. Réessayez depuis la page de suivi.', 'bad'); }
         }
         await refresh(); location.hash = '#/suivi/' + res.num; render();
-        if (res.status !== 'awaiting') toast('Commande envoyée. Merci !', 'ok');
+        if (res.status !== 'awaiting') { if (typeof soundOk==='function') soundOk(); if (typeof confetti==='function') confetti(); toast('Commande envoyée. Merci !', 'ok'); } else if (typeof soundOk==='function') soundOk();
       } catch (e) { if (btn) { btn.disabled = false; btn.textContent = payBtnLabel(); } fail(fr(e)); }
     },
     async lookup(f) {
